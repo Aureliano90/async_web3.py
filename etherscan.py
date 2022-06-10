@@ -2,7 +2,8 @@ from aweb3 import *
 from datetime import datetime, timezone
 import aiohttp
 
-apikey = ''
+# os.environ['Etherscan_API_Key'] = ''
+apikey = os.environ.get('Etherscan_API_Key')
 
 
 async def etherscan_query(params: Dict) -> Any:
@@ -24,7 +25,7 @@ async def block_by_timestamp(timestamp: Union[int, datetime]) -> int:
     return int(await etherscan_query(params))
 
 
-async def get_logs(from_block: int, to_block: int, address: str, **topics) -> List[Dict]:
+async def get_logs(from_block: int, to_block: int, address: str, **topics) -> List[LogReceipt]:
     params = dict(
         module='logs',
         action='getLogs',
@@ -35,3 +36,26 @@ async def get_logs(from_block: int, to_block: int, address: str, **topics) -> Li
     )
     params.update(topics)
     return await etherscan_query(params)
+
+
+def process_logs(event: ContractEvent, logs: List[LogReceipt]) -> List[EventData]:
+    processed = []
+    for log in logs:
+        for i, topic in enumerate(log['topics']):
+            if isinstance(topic, str):
+                log['topics'][i] = decode_hex(topic)
+        if 'blockHash' not in log:
+            log['blockHash'] = HexBytes(0)
+        processed.append(event.processLog(log))
+    return processed
+
+
+async def get_transaction_receipt(tx_hash: HexStr) -> TxReceipt:
+    params = dict(
+        module='proxy',
+        action='eth_getTransactionReceipt',
+        txhash=tx_hash,
+        apikey=apikey
+    )
+    res = await etherscan_query(params)
+    return apply_result_formatters(receipt_formatter, res) if res else res
