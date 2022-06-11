@@ -3,21 +3,20 @@ from asyncio.futures import wrap_future
 import json
 import traceback
 import websockets
-from web3 import Web3, WebsocketProvider
 from web3.datastructures import AttributeDict
-from web3.eth import Eth
+from web3.main import *
 from web3.method import (
     Method,
     default_root_munger,
 )
 from web3.middleware import (
-    buffered_gas_estimate_middleware,
-    gas_price_strategy_middleware
+    async_buffered_gas_estimate_middleware,
+    async_gas_price_strategy_middleware
 )
-from web3.module import apply_result_formatters
+from web3.module import apply_result_formatters, retrieve_async_method_call_fn
 from web3.types import *
 from web3._utils.rpc_abi import RPC, RPCEndpoint
-from web3._utils.method_formatters import get_result_formatters, log_entry_formatter, receipt_formatter
+from web3._utils.method_formatters import get_result_formatters, log_entry_formatter
 
 
 class WsEth(Eth):
@@ -34,9 +33,27 @@ class WsEth(Eth):
     )
 
 
+class AsyncWebsocketProvider(WebsocketProvider):
+    request_func = AsyncHTTPProvider.request_func
+    _generate_request_func = AsyncHTTPProvider._generate_request_func
+    isConnected = AsyncHTTPProvider.isConnected
+
+    async def make_request(self, method: RPCEndpoint, params: Any) -> RPCResponse:
+        self.logger.debug("Making request WebSocket. URI: %s, "
+                          "Method: %s", self.endpoint_uri, method)
+        request_data = self.encode_rpc_request(method, params)
+        future = asyncio.run_coroutine_threadsafe(
+            self.coro_make_request(request_data),
+            WebsocketProvider._loop
+        )
+        await wrap_future(future, loop=asyncio.get_running_loop())
+        return future.result()
+
+
 class WebsocketSubscription:
     """Base class for Websocket subscription to node
     """
+
     def __init__(
             self,
             endpoint_uri: str,
@@ -46,60 +63,65 @@ class WebsocketSubscription:
             loop=None
     ):
         self.web3 = Web3(
-            provider=WebsocketProvider(
+            provider=AsyncWebsocketProvider(
                 endpoint_uri,
                 websocket_timeout=timeout
             ),
-            middlewares=[gas_price_strategy_middleware, buffered_gas_estimate_middleware]
+            middlewares=[async_gas_price_strategy_middleware, async_buffered_gas_estimate_middleware]
         )
         self.ws_eth = WsEth(self.web3)
+        self.ws_eth.is_async = True
+        self.ws_eth.retrieve_caller_fn = retrieve_async_method_call_fn(self.web3, self.ws_eth)
         self.sub_type = sub_type
         self.args = args
         self.timeout = timeout
         self.conn = self.web3.provider.conn
+        # Current event loop
         if loop is None:
             self.loop = asyncio.get_event_loop()
         else:
             self.loop = loop
+        # Event loop in another thread
         self._loop = self.conn.loop
         self.subscription_id = ''
+
+    async def coroutine_different_loop(self, coro):
+        """Coroutine that submits a coroutine object to a different event loop
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(coro, self.timeout),
+            loop=self._loop
+        )
+        await wrap_future(fut, loop=self.loop)
+        return fut.result()
+
+    async def close(self):
+        await self.coroutine_different_loop(self.conn.ws.close())
+        self.conn.ws = None
 
     async def __aiter__(self):
         """AsyncGenerator of Websocket feed
         """
         while True:
             try:
-                self.subscription_id = self.ws_eth.subscribe(self.sub_type, *self.args)
+                self.subscription_id = await self.ws_eth.subscribe(self.sub_type, *self.args)
                 while True:
                     try:
-                        fut = asyncio.run_coroutine_threadsafe(
-                            asyncio.wait_for(self.conn.ws.recv(), self.timeout),
-                            loop=self._loop
-                        )
-                        await wrap_future(fut, loop=self.loop)
-                        fut_res = fut.result()
+                        fut_res = await self.coroutine_different_loop(self.conn.ws.recv())
                         json_res = json.loads(fut_res)
                         # print(json_res)
                         res = self.processResult(json_res['params']['result'])
                         yield AttributeDict.recursive(res)
                     except (asyncio.TimeoutError, websockets.ConnectionClosed):
                         print('Websocket timed out. Subscribe again.')
-                        res = self.ws_eth.unsubscribe(self.subscription_id)
+                        res = await self.ws_eth.unsubscribe(self.subscription_id)
                         print(self.subscription_id, 'unsubscribed', res)
-                        self.close()
+                        await self.close()
                         break
             except Exception:
                 traceback.print_exc()
-                self.close()
+                await self.close()
                 break
-
-    def close(self):
-        fut = asyncio.run_coroutine_threadsafe(
-            asyncio.wait_for(self.conn.ws.close(), self.timeout),
-            loop=self._loop
-        )
-        fut.result()
-        self.conn.ws = None
 
     def processResult(self, res):
         return res

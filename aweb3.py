@@ -13,14 +13,8 @@ from web3.contract import (
     prepare_transaction
 )
 from web3.logs import DISCARD
-from web3.main import *
-from web3.middleware import (
-    async_buffered_gas_estimate_middleware,
-    async_gas_price_strategy_middleware
-)
-from web3.module import retrieve_async_method_call_fn
-from web3._utils.abi import get_abi_output_types, map_abi_data
-from web3._utils.empty import Empty, empty
+from web3._utils.abi import get_abi_output_types
+from web3._utils.empty import Empty
 from web3._utils.filters import Filter, LogFilter
 from web3._utils.module import attach_modules
 from web3._utils.normalizers import BASE_RETURN_NORMALIZERS
@@ -55,10 +49,7 @@ class aWeb3(Web3):
         self.async_eth = self.eth
         self.async_eth.is_async = True
         self.async_eth.retrieve_caller_fn = retrieve_async_method_call_fn(self, self.async_eth)
-        self.eth = Web3(
-            provider=HTTPProvider(endpoint_uri),
-            middlewares=[gas_price_strategy_middleware, buffered_gas_estimate_middleware]
-        ).eth
+        self.eth = Web3(provider=HTTPProvider(endpoint_uri)).eth
         self._nonce = Nonce(0)
 
     @property
