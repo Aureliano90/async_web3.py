@@ -3,6 +3,7 @@ from asyncio.futures import wrap_future
 import json
 import traceback
 import websockets
+from web3.exceptions import BadResponseFormat
 from web3.datastructures import AttributeDict
 from web3.main import *
 from web3.method import (
@@ -58,7 +59,7 @@ class WebsocketSubscription:
             self,
             endpoint_uri: str,
             sub_type: str,
-            *args,
+            params: Optional[Dict] = None,
             timeout=20,
             loop=None
     ):
@@ -73,7 +74,7 @@ class WebsocketSubscription:
         self.ws_eth.is_async = True
         self.ws_eth.retrieve_caller_fn = retrieve_async_method_call_fn(self.web3, self.ws_eth)
         self.sub_type = sub_type
-        self.args = args
+        self.params = [params] if params else []
         self.timeout = timeout
         self.conn = self.web3.provider.conn
         # Current event loop
@@ -96,7 +97,8 @@ class WebsocketSubscription:
         return fut.result()
 
     async def close(self):
-        await self.coroutine_different_loop(self.conn.ws.close())
+        if self.conn.ws:
+            await self.coroutine_different_loop(self.conn.ws.close())
         self.conn.ws = None
 
     async def __aiter__(self):
@@ -104,7 +106,7 @@ class WebsocketSubscription:
         """
         while True:
             try:
-                self.subscription_id = await self.ws_eth.subscribe(self.sub_type, *self.args)
+                self.subscription_id = await self.ws_eth.subscribe(self.sub_type, *self.params)
                 while True:
                     try:
                         fut_res = await self.coroutine_different_loop(self.conn.ws.recv())
@@ -114,8 +116,11 @@ class WebsocketSubscription:
                         yield AttributeDict.recursive(res)
                     except (asyncio.TimeoutError, websockets.ConnectionClosed):
                         print('Websocket timed out. Subscribe again.')
-                        res = await self.ws_eth.unsubscribe(self.subscription_id)
-                        print(self.subscription_id, 'unsubscribed', res)
+                        try:
+                            res = await self.ws_eth.unsubscribe(self.subscription_id)
+                            print(self.subscription_id, 'unsubscribed', res)
+                        except (BadResponseFormat, websockets.ConnectionClosed):
+                            pass
                         await self.close()
                         break
             except Exception:
@@ -129,6 +134,8 @@ class WebsocketSubscription:
 
 class NewHeads(WebsocketSubscription):
     def __init__(self, endpoint_uri: str, loop=None):
+        """Websocket generator of new blocks
+        """
         super().__init__(endpoint_uri, 'newHeads', loop=loop)
 
     def processResult(self, res: Dict):
@@ -140,16 +147,32 @@ class NewHeads(WebsocketSubscription):
 
 
 class PendingTransactions(WebsocketSubscription):
-    def __init__(self, endpoint_uri: str, loop=None):
-        super().__init__(endpoint_uri, 'newPendingTransactions', loop=loop)
+    def __init__(
+            self,
+            endpoint_uri: str,
+            params: Optional[Dict] = None,
+            loop=None
+    ):
+        """Websocket generator of pending transactions
 
-    def processResult(self, tx_hash: HexStr):
-        return tx_hash
-        # return apply_result_formatters(
-        #     get_result_formatters(
-        #         RPC.eth_getTransactionByHash,
-        #         self.ws_eth),
-        #     res)
+        :param endpoint_uri:
+        :param params: Allowed parameters: `fromAddress`, `toAddress` or `hashesOnly`
+        :param loop:
+        """
+        if 'alchemy' in endpoint_uri:
+            super().__init__(endpoint_uri, 'alchemy_pendingTransactions', params=params, loop=loop)
+        else:
+            super().__init__(endpoint_uri, 'newPendingTransactions', loop=loop)
+
+    def processResult(self, tx: Union[Dict, HexStr]):
+        if isinstance(tx, Dict):
+            return apply_result_formatters(
+                get_result_formatters(
+                    RPC.eth_getTransactionByHash,
+                    self.ws_eth),
+                tx)
+        else:
+            return tx
 
 
 class Logs(WebsocketSubscription):
@@ -165,7 +188,7 @@ class Logs(WebsocketSubscription):
             params['address'] = address
         if topics:
             params['topics'] = list(topics)
-        super().__init__(endpoint_uri, 'logs', params, loop=loop)
+        super().__init__(endpoint_uri, 'logs', params=params, loop=loop)
 
     def processResult(self, log: LogReceipt):
         return apply_result_formatters(log_entry_formatter, log)
