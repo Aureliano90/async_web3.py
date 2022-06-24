@@ -17,7 +17,7 @@ from web3.middleware import (
 from web3.module import apply_result_formatters, retrieve_async_method_call_fn
 from web3.types import *
 from web3._utils.rpc_abi import RPC, RPCEndpoint
-from web3._utils.method_formatters import get_result_formatters, log_entry_formatter
+from web3._utils.method_formatters import get_result_formatters, log_entry_formatter, receipt_formatter
 
 
 class WsEth(Eth):

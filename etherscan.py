@@ -2,7 +2,7 @@ from aweb3 import *
 from datetime import datetime, timezone
 import aiohttp
 
-# os.environ['Etherscan_API_Key'] = ''
+os.environ['Etherscan_API_Key'] = ''
 apikey = os.environ.get('Etherscan_API_Key')
 
 

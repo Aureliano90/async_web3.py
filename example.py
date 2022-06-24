@@ -6,7 +6,6 @@ os.environ['Etherscan_API_Key'] = ''
 
 from etherscan import *
 from pprint import pprint
-from eth_utils.hexadecimal import encode_hex
 
 
 async def main():
