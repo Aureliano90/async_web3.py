@@ -2,7 +2,9 @@ import asyncio
 from asyncio.futures import wrap_future
 import json
 import traceback
+from typing import AsyncGenerator
 import websockets
+from eth_typing import HexAddress
 from web3.exceptions import BadResponseFormat
 from web3.datastructures import AttributeDict
 from web3.main import *
@@ -60,7 +62,7 @@ class WebsocketSubscription:
             endpoint_uri: str,
             sub_type: str,
             params: Optional[Dict] = None,
-            timeout=20,
+            timeout=40,
             loop=None
     ):
         self.web3 = Web3(
@@ -112,13 +114,13 @@ class WebsocketSubscription:
                         fut_res = await self.coroutine_different_loop(self.conn.ws.recv())
                         json_res = json.loads(fut_res)
                         # print(json_res)
-                        res = self.processResult(json_res['params']['result'])
-                        yield AttributeDict.recursive(res)
+                        res = AttributeDict.recursive(json_res['params']['result'])
+                        yield self.process_result(res)
                     except (asyncio.TimeoutError, websockets.ConnectionClosed):
-                        print('Websocket timed out. Subscribe again.')
+                        # print('Websocket timed out. Subscribe again.')
                         try:
                             res = await self.ws_eth.unsubscribe(self.subscription_id)
-                            print(self.subscription_id, 'unsubscribed', res)
+                            # print(self.subscription_id, 'unsubscribed', res)
                         except (BadResponseFormat, websockets.ConnectionClosed):
                             pass
                         await self.close()
@@ -128,7 +130,7 @@ class WebsocketSubscription:
                 await self.close()
                 break
 
-    def processResult(self, res):
+    def process_result(self, res):
         return res
 
 
@@ -137,8 +139,25 @@ class NewHeads(WebsocketSubscription):
         """Websocket generator of new blocks
         """
         super().__init__(endpoint_uri, 'newHeads', loop=loop)
+        self.current: Optional[BlockData] = None
 
-    def processResult(self, res: Dict):
+    async def __aiter__(self) -> AsyncGenerator[BlockData, None]:
+        async for block in super().__aiter__():
+            if self.current is None:
+                yield block
+            else:
+                if block.number > self.current.number:
+                    while block.number - self.current.number > 1:
+                        try:
+                            next_block = await self.ws_eth.get_block(self.current.number + 1)
+                            yield next_block
+                            self.current = next_block
+                        except BadResponseFormat:
+                            pass
+                    yield block
+            self.current = block
+
+    def process_result(self, res: AttributeDict) -> BlockData:
         return apply_result_formatters(
             get_result_formatters(
                 RPC.eth_getBlockByNumber,
@@ -146,26 +165,28 @@ class NewHeads(WebsocketSubscription):
             res)
 
 
+class AlchemyPendingFilter(TypedDict):
+    fromAddress: Union[HexAddress, List[HexAddress]]
+    toAddress: Union[HexAddress, List[HexAddress]]
+    hashesOnly: bool
+
+
 class PendingTransactions(WebsocketSubscription):
     def __init__(
             self,
             endpoint_uri: str,
-            params: Optional[Dict] = None,
+            params: Optional[AlchemyPendingFilter] = None,
             loop=None
     ):
         """Websocket generator of pending transactions
-
-        :param endpoint_uri:
-        :param params: Allowed parameters: `fromAddress`, `toAddress` or `hashesOnly`
-        :param loop:
         """
         if 'alchemy' in endpoint_uri:
             super().__init__(endpoint_uri, 'alchemy_pendingTransactions', params=params, loop=loop)
         else:
             super().__init__(endpoint_uri, 'newPendingTransactions', loop=loop)
 
-    def processResult(self, tx: Union[Dict, HexStr]):
-        if isinstance(tx, Dict):
+    def process_result(self, tx: Union[AttributeDict, HexStr]) -> Union[TxData, HexStr]:
+        if isinstance(tx, AttributeDict):
             return apply_result_formatters(
                 get_result_formatters(
                     RPC.eth_getTransactionByHash,
@@ -190,5 +211,5 @@ class Logs(WebsocketSubscription):
             params['topics'] = list(topics)
         super().__init__(endpoint_uri, 'logs', params=params, loop=loop)
 
-    def processResult(self, log: LogReceipt):
+    def process_result(self, log: AttributeDict) -> LogReceipt:
         return apply_result_formatters(log_entry_formatter, log)

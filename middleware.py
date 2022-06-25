@@ -139,7 +139,7 @@ def construct_latest_block_based_cache_middleware(
         block time.
     """
 
-    async def async_latest_block_based_cache_middleware(
+    async def latest_block_based_cache_middleware(
             make_request: Callable[[RPCEndpoint, Any], Any], web3: "aweb3.aWeb3"
     ) -> AsyncMiddleware:
         cache = cache_class()
@@ -221,7 +221,7 @@ def construct_latest_block_based_cache_middleware(
 
         return middleware
 
-    return async_latest_block_based_cache_middleware
+    return latest_block_based_cache_middleware
 
 
 async_latest_block_based_cache_middleware = construct_latest_block_based_cache_middleware(

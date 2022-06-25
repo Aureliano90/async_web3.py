@@ -20,6 +20,7 @@ from web3._utils.module import attach_modules
 from web3._utils.normalizers import BASE_RETURN_NORMALIZERS
 from websocket import *
 import middleware
+import rlp
 
 if not os.environ.get('WEB3_WS_PROVIDER_URI'):
     os.environ['WEB3_INFURA_SCHEME'] = 'wss'
@@ -32,8 +33,10 @@ class aWeb3(Web3):
     # Async Eth
     eth: Eth
     loop = asyncio.get_event_loop()
-    newHeads = NewHeads(os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
-    pendingTransactions = functools.partial(PendingTransactions, os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
+    newHeads: AsyncGenerator[BlockData, None] = NewHeads(os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
+    pendingTransactions: Callable[[Optional[AlchemyPendingFilter]], AsyncGenerator[TxData, None]] = functools.partial(
+        PendingTransactions,
+        os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
 
     def __new__(cls, endpoint_uri: str):
         obj = super().__new__(cls)
@@ -143,6 +146,16 @@ class aWeb3(Web3):
             abi=abi,
             **kwargs
         )
+
+    async def contract_address(
+            self,
+            creator: AnyAddress,
+            nonce: Optional[Nonce] = None,
+            block_identifier: Optional[BlockIdentifier] = None
+    ) -> HexStr:
+        if nonce is None:
+            nonce = await self.eth.get_transaction_count(self.toChecksumAddress(creator), block_identifier)
+        return encode_hex(keccak(rlp.encode([to_canonical_address(creator), nonce]))[12:])
 
     async def token_balance(
             self,
@@ -307,7 +320,7 @@ class aWeb3(Web3):
         signed_tx = self.sign_transaction(transaction)
         return await self.send_raw_transaction(signed_tx.rawTransaction)
 
-    async def get_transaction_receipt(self, tx_hash: Union[HexStr, HexBytes]):
+    async def get_transaction_receipt(self, tx_hash: Union[HexStr, HexBytes]) -> TxReceipt:
         return await self.eth.get_transaction_receipt(HexBytes(tx_hash))
 
     async def transfer_eth(
@@ -399,7 +412,7 @@ class aWeb3(Web3):
             event: Optional[ContractEvent] = None,
             address: Optional[Union[AnyAddress, Sequence[AnyAddress]]] = None,
             topics: Optional[Sequence[str]] = None,
-    ):
+    ) -> AsyncGenerator[EventData, None]:
         """AsyncGenerator of logs
 
         :param event: Contract event
@@ -424,14 +437,16 @@ class aWeb3(Web3):
         ):
             yield event.processLog(log) if event else log
 
-    async def txs_by_block(self, block_number: int):
+    async def txs_by_block(self, block_number: int) -> AsyncGenerator[TxData, None]:
         """AsyncGenerator of new transactions
         """
         block = await self.eth.get_block(block_number, full_transactions=True)
         for tx in block.transactions:
             yield tx
 
-    async def new_blocks(self):
+    async def new_blocks(self) -> AsyncGenerator[BlockData, None]:
+        """Alternative newHeads without Websocket
+        """
         prev = block = await self.eth.get_block('latest', full_transactions=True)
         yield block
         while True:
@@ -441,3 +456,7 @@ class aWeb3(Web3):
                     prev = block = await self.eth.get_block(prev.number + 1, full_transactions=True)
                 yield block
             await asyncio.sleep(1)
+
+    @staticmethod
+    async def decode_pending(contract: Contract, tx: TxData):
+        return contract.decode_function_input(tx.input)
