@@ -65,6 +65,7 @@ class WebsocketSubscription:
             timeout=40,
             loop=None
     ):
+        self.endpoint_uri = endpoint_uri
         self.web3 = Web3(
             provider=AsyncWebsocketProvider(
                 endpoint_uri,
@@ -98,6 +99,11 @@ class WebsocketSubscription:
         await wrap_future(fut, loop=self.loop)
         return fut.result()
 
+    async def connect(self):
+        self.conn.ws = await self.coroutine_different_loop(
+            websockets.connect(uri=self.endpoint_uri, loop=self._loop, **self.conn.websocket_kwargs)
+        )
+
     async def close(self):
         if self.conn.ws:
             await self.coroutine_different_loop(self.conn.ws.close())
@@ -113,22 +119,22 @@ class WebsocketSubscription:
                     try:
                         fut_res = await self.coroutine_different_loop(self.conn.ws.recv())
                         json_res = json.loads(fut_res)
-                        # print(json_res)
                         res = AttributeDict.recursive(json_res['params']['result'])
                         yield self.process_result(res)
-                    except (asyncio.TimeoutError, websockets.ConnectionClosed):
-                        # print('Websocket timed out. Subscribe again.')
+                    except asyncio.TimeoutError:
                         try:
                             res = await self.ws_eth.unsubscribe(self.subscription_id)
-                            # print(self.subscription_id, 'unsubscribed', res)
-                        except (BadResponseFormat, websockets.ConnectionClosed):
+                        except BadResponseFormat:
                             pass
                         await self.close()
                         break
+            except websockets.ConnectionClosed:
+                await self.connect()
+            except websockets.InvalidStatusCode:
+                continue
             except Exception:
                 traceback.print_exc()
                 await self.close()
-                break
 
     def process_result(self, res):
         return res
