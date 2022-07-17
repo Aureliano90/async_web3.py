@@ -197,6 +197,21 @@ class aWeb3(Web3):
                 max_priority_fee + 2 * (await self.eth.get_block('latest'))['baseFeePerGas']
         return merge(transaction, default_tx)
 
+    async def gas_level(self, block_count, max_fee, max_priority_fee):
+        """Wait for desired gas price level
+
+        :param block_count: number of blocks to take average of
+        :param max_fee: in gwei
+        :param max_priority_fee: in gwei
+        :return:
+        """
+        max_fee = self.toWei(max_fee, 'gwei')
+        max_priority_fee = self.toWei(max_priority_fee, 'gwei')
+        async for _ in self.newHeads:
+            fee_history = await self.eth.fee_history(block_count, await self.eth.get_block_number())
+            if max_priority_fee + sum(fee_history.baseFeePerGas) / len(fee_history.baseFeePerGas) <= max_fee:
+                break
+
     def prepare_transaction(
             self,
             fn: ContractFunction,
