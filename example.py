@@ -4,7 +4,7 @@ os.environ['WEB3_INFURA_PROJECT_ID'] = '9aa3d95b3bc440fa88ea12eaa4456161'
 os.environ['WEB3_WS_PROVIDER_URI'] = f"wss://kovan.infura.io/ws/v3/{os.environ['WEB3_INFURA_PROJECT_ID']}"
 os.environ['Etherscan_API_Key'] = ''
 
-from etherscan import *
+from src.etherscan import *
 from pprint import pprint
 
 

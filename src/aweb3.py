@@ -18,13 +18,15 @@ from web3._utils.empty import Empty
 from web3._utils.filters import Filter, LogFilter
 from web3._utils.module import attach_modules
 from web3._utils.normalizers import BASE_RETURN_NORMALIZERS
-from websocket import *
-import middleware
+from .websocket import *
+from .middleware import async_latest_block_based_cache_middleware
 import rlp
 
 if not os.environ.get('WEB3_WS_PROVIDER_URI'):
+    scheme = os.environ['WEB3_INFURA_SCHEME']
     os.environ['WEB3_INFURA_SCHEME'] = 'wss'
     os.environ['WEB3_WS_PROVIDER_URI'] = build_infura_url(INFURA_MAINNET_DOMAIN)
+    os.environ['WEB3_INFURA_SCHEME'] = scheme
 
 
 class aWeb3(Web3):
@@ -50,7 +52,7 @@ class aWeb3(Web3):
             middlewares=[
                 async_gas_price_strategy_middleware,
                 async_buffered_gas_estimate_middleware,
-                middleware.async_latest_block_based_cache_middleware
+                async_latest_block_based_cache_middleware
             ]
         )
         self.eth.is_async = True
@@ -197,19 +199,25 @@ class aWeb3(Web3):
                 max_priority_fee + 2 * (await self.eth.get_block('latest'))['baseFeePerGas']
         return merge(transaction, default_tx)
 
-    async def gas_level(self, block_count, max_fee, max_priority_fee):
+    async def average_gas(self, block_count=3) -> Wei:
+        """Recent average base fee
+
+        :param block_count: number of blocks to take average of
+        :return:
+        """
+        fee_history = await self.eth.fee_history(block_count, 'latest')
+        return int(sum(fee_history.baseFeePerGas) / len(fee_history.baseFeePerGas))
+
+    async def gas_level(self, max_fee, block_count=3):
         """Wait for desired gas price level
 
         :param block_count: number of blocks to take average of
         :param max_fee: in gwei
-        :param max_priority_fee: in gwei
         :return:
         """
         max_fee = self.toWei(max_fee, 'gwei')
-        max_priority_fee = self.toWei(max_priority_fee, 'gwei')
         async for _ in self.newHeads:
-            fee_history = await self.eth.fee_history(block_count, await self.eth.get_block_number())
-            if max_priority_fee + sum(fee_history.baseFeePerGas) / len(fee_history.baseFeePerGas) <= max_fee:
+            if await self.average_gas(block_count) <= max_fee:
                 break
 
     def prepare_transaction(

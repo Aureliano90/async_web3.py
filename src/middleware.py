@@ -29,7 +29,7 @@ from web3.types import (  # noqa: F401
     RPCEndpoint,
     RPCResponse,
 )
-import aweb3
+from . import aweb3
 
 
 def _should_cache(method: RPCEndpoint, params: Any, response: RPCResponse) -> bool:
