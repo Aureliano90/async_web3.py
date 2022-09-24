@@ -476,7 +476,8 @@ class aWeb3(Web3):
             block = await self.eth.get_block('latest', full_transactions=True)
             if block.number > prev.number:
                 if block.number - prev.number > 1:
-                    prev = block = await self.eth.get_block(prev.number + 1, full_transactions=True)
+                    block = await self.eth.get_block(prev.number + 1, full_transactions=True)
+                prev = block
                 yield block
             await asyncio.sleep(1)
 
