@@ -1,31 +1,27 @@
 import functools
-import itertools
-import os
 from types import MethodType
 from eth_account import Account
 from eth_account.datastructures import SignedTransaction
 from eth_utils import *
 from eth_utils.toolz import merge
-from web3.auto.infura import *
 from web3.contract import (
     Contract,
     ContractFunction,
     ContractEvent,
     prepare_transaction
 )
-from web3._utils.abi import get_abi_output_types
 from web3._utils.empty import Empty
 from web3._utils.filters import Filter, LogFilter
 from web3._utils.module import attach_modules
-from web3._utils.normalizers import BASE_RETURN_NORMALIZERS
-from .websocket import *
+from .multicall import *
 from .middleware import async_latest_block_based_cache_middleware
 import rlp
+from web3.auto.infura import *
 
 if not os.environ.get('WEB3_WS_PROVIDER_URI'):
     scheme = os.environ['WEB3_INFURA_SCHEME']
     os.environ['WEB3_INFURA_SCHEME'] = 'wss'
-    os.environ['WEB3_WS_PROVIDER_URI'] = build_infura_url(INFURA_MAINNET_DOMAIN)
+    os.environ['WEB3_WS_PROVIDER_URI'] = build_infura_url(os.environ['NETWORK'] + '.infura.io')
     os.environ['WEB3_INFURA_SCHEME'] = scheme
 
 
@@ -36,9 +32,8 @@ class aWeb3(Web3):
     eth: Eth
     loop = asyncio.get_event_loop()
     newHeads: AsyncGenerator[BlockData, None] = NewHeads(os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
-    pendingTransactions: Callable[[Optional[AlchemyPendingFilter]], AsyncGenerator[TxData, None]] = functools.partial(
-        PendingTransactions,
-        os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
+    pendingTransactions: Callable[[Optional[AlchemyPendingFilter]], AsyncGenerator[TxData, None]] \
+        = functools.partial(PendingTransactions, os.environ['WEB3_WS_PROVIDER_URI'], loop=loop)
 
     def __new__(cls, endpoint_uri: str):
         obj = super().__new__(cls)
@@ -48,17 +43,19 @@ class aWeb3(Web3):
 
     def __init__(self, endpoint_uri: str):
         super().__init__(
-            provider=AsyncHTTPProvider(endpoint_uri),
+            provider=MulticallHTTPProvider(endpoint_uri),
             middlewares=[
                 async_gas_price_strategy_middleware,
                 async_buffered_gas_estimate_middleware,
-                async_latest_block_based_cache_middleware
+                # async_latest_block_based_cache_middleware
             ]
         )
         self.eth.is_async = True
         self.eth.retrieve_caller_fn = retrieve_async_method_call_fn(self, self.eth)
         self._eth = Web3(provider=HTTPProvider(endpoint_uri)).eth
         self._nonce = Nonce(0)
+        with open('./abi/Multicall2.json') as abi:
+            self.MULTICALL = self.contract(MULTICALL_ADDRESS[os.environ['NETWORK']], abi=json.load(abi)['abi'])
 
     @property
     def default_account(self) -> Union[ChecksumAddress, Empty]:
@@ -311,22 +308,7 @@ class aWeb3(Web3):
             transaction
         )
         return_data = await self.eth.call(prepared_tx, block_identifier, state_override)
-        return self.decode_return_data(return_data, fn.abi, fn._return_data_normalizers)
-
-    def decode_return_data(
-            self,
-            return_data: bytes,
-            fn_abi,
-            normalizers
-    ) -> Any:
-        output_types = get_abi_output_types(fn_abi)
-        output_data = self.codec.decode_abi(output_types, return_data)
-        _normalizers = itertools.chain(BASE_RETURN_NORMALIZERS, normalizers)
-        normalized_data = map_abi_data(_normalizers, output_types, output_data)
-        if len(normalized_data) == 1:
-            return normalized_data[0]
-        else:
-            return normalized_data
+        return decode_return_data(self, return_data, fn.abi, fn._return_data_normalizers)
 
     async def send_raw_transaction(self, transaction: Union[HexStr, bytes]) -> HexBytes:
         return await self.eth.send_raw_transaction(transaction)
@@ -484,3 +466,51 @@ class aWeb3(Web3):
     @staticmethod
     async def decode_pending(contract: Contract, tx: TxData):
         return contract.decode_function_input(tx.input)
+
+    async def multicall(
+            self,
+            fns: Sequence[ContractFunction],
+            fn_args: Optional[Sequence[Optional[Sequence]]] = None,
+            fn_kwargs: Optional[Sequence[Optional[Dict]]] = None,
+            requireSuccess=True,
+            transaction: Optional[TxParams] = None,
+            block_identifier: Optional[BlockIdentifier] = None,
+            state_override: Optional[CallOverrideParams] = None
+    ):
+        """Aggregate `eth_call` RPC explicitly
+
+        :param fns:
+        :param fn_args:
+        :param fn_kwargs:
+        :param requireSuccess:
+        :param transaction:
+        :param block_identifier:
+        :param state_override:
+        :return:
+        """
+        if fn_args:
+            assert len(fns) == len(fn_args)
+        else:
+            fn_args = [None] * len(fns)
+        if fn_kwargs:
+            assert len(fns) == len(fn_kwargs)
+        else:
+            fn_kwargs = [{}] * len(fns)
+        calls = [
+            (fn.address, self.prepare_transaction(fn, fn_args[i], fn_kwargs[i])['data'])
+            for i, fn in enumerate(fns)
+        ]
+        return_data: Sequence[Tuple[bool, HexBytes]] = await self.call(
+            self.MULTICALL.functions.tryAggregate(requireSuccess, calls),
+            transaction=transaction,
+            block_identifier=block_identifier,
+            state_override=state_override
+        )
+        return [
+            decode_return_data(
+                self,
+                return_data[i][1],
+                fn.abi,
+                fn._return_data_normalizers
+            ) for i, fn in enumerate(fns)
+        ]

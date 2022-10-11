@@ -19,7 +19,12 @@ from web3.middleware import (
 from web3.module import apply_result_formatters, retrieve_async_method_call_fn
 from web3.types import *
 from web3._utils.rpc_abi import RPC, RPCEndpoint
-from web3._utils.method_formatters import get_result_formatters, log_entry_formatter, receipt_formatter
+from web3._utils.method_formatters import (
+    get_result_formatters,
+    log_entry_formatter,
+    receipt_formatter,
+    PYTHONIC_RESULT_FORMATTERS
+)
 
 
 class WsEth(Eth):
@@ -101,7 +106,11 @@ class WebsocketSubscription:
 
     async def connect(self):
         self.conn.ws = await self.coroutine_different_loop(
-            websockets.connect(uri=self.endpoint_uri, loop=self._loop, **self.conn.websocket_kwargs)
+            websockets.connect(
+                uri=self.endpoint_uri,
+                loop=self._loop,
+                **self.conn.websocket_kwargs
+            )
         )
 
     async def close(self):
@@ -168,7 +177,8 @@ class NewHeads(WebsocketSubscription):
             get_result_formatters(
                 RPC.eth_getBlockByNumber,
                 self.ws_eth),
-            res)
+            res
+        )
 
 
 class AlchemyPendingFilter(TypedDict):
@@ -197,7 +207,8 @@ class PendingTransactions(WebsocketSubscription):
                 get_result_formatters(
                     RPC.eth_getTransactionByHash,
                     self.ws_eth),
-                tx)
+                tx
+            )
         else:
             return tx
 

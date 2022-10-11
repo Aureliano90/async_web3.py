@@ -1,16 +1,15 @@
-from aweb3 import *
+from .aweb3 import *
 from datetime import datetime, timezone
 import aiohttp
 
-# os.environ['Etherscan_API_Key'] = ''
-apikey = os.environ.get('Etherscan_API_Key', '')
+apikey = os.environ.get('EXPLORER_API_KEY', '')
+explorer_client = aiohttp.client.ClientSession(os.environ['BLOCK_EXPLORER'])
 
 
 async def etherscan_query(params: Dict) -> Any:
-    async with aiohttp.client.ClientSession('https://api.etherscan.io') as client:
-        async with client.get('/api', params=params) as response:
-            res = await response.json()
-            return res['result']
+    async with explorer_client.get('/api', params=params) as response:
+        res = await response.json()
+        return res['result']
 
 
 async def get_abi(contract: str) -> str:
@@ -18,7 +17,7 @@ async def get_abi(contract: str) -> str:
     return await etherscan_query(params)
 
 
-async def block_by_timestamp(timestamp: Union[int, datetime]) -> int:
+async def block_by_timestamp(timestamp: Union[int, float, datetime]) -> int:
     if isinstance(timestamp, datetime):
         timestamp = timestamp.replace(tzinfo=timezone.utc).timestamp()
     params = dict(module='block', action='getblocknobytime', timestamp=int(timestamp), closest='before', apikey=apikey)
