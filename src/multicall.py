@@ -85,13 +85,16 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
                 **self.get_request_kwargs()
             )
             response = self.decode_rpc_response(raw_response)
-            result = PYTHONIC_RESULT_FORMATTERS[RPC.eth_call](response['result'])
-            response['result'] = decode_return_data(
-                self.web3,
-                result,
-                aggregate.abi,
-                aggregate._return_data_normalizers
-            )[1]
+            try:
+                result = PYTHONIC_RESULT_FORMATTERS[RPC.eth_call](response['result'])
+                response['result'] = decode_return_data(
+                    self.web3,
+                    result,
+                    aggregate.abi,
+                    aggregate._return_data_normalizers
+                )[1]
+            except KeyError:
+                pass
         return response
 
     async def multicall(self):
@@ -108,15 +111,22 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
             queries = [self.single_call(batch) for batch in batches.values()]
             responses: Tuple[RPCResponse] = await asyncio.gather(*queries)
             for response, batch in zip(responses, batches.values()):
-                for result, call in zip(response['result'], batch):
-                    res = RPCResponse(
-                        id=response['id'],
-                        jsonrpc=response['jsonrpc'],
-                        result=result
-                    )
-                    if 'error' in response:
-                        res['error'] = response['error']
-                    working[call].set_result(res)
+                if 'result' in response:
+                    for result, call in zip(response['result'], batch):
+                        res = RPCResponse(
+                            id=response['id'],
+                            jsonrpc=response['jsonrpc'],
+                            result=result
+                        )
+                        working[call].set_result(res)
+                elif 'error' in response:
+                    for call in batch:
+                        res = RPCResponse(
+                            id=response['id'],
+                            jsonrpc=response['jsonrpc'],
+                            error=response['error']
+                        )
+                        working[call].set_result(res)
 
     async def make_request(self, method: RPCEndpoint, params: Any) -> RPCResponse:
         self.logger.debug("Making request HTTP. URI: %s, Method: %s",
