@@ -57,9 +57,12 @@ def decode_return_data(
 
 
 class MulticallHTTPProvider(AsyncHTTPProvider):
-    loop = asyncio.get_event_loop()
-    calls: Dict[Call, asyncio.Future] = {}
     web3 = Web3()
+
+    def __init__(self, endpoint_uri, request_kwargs: Optional[Any] = None):
+        super().__init__(endpoint_uri, request_kwargs)
+        self.calls: Dict[Call, asyncio.Future] = {}
+        self.loop = asyncio.get_event_loop()
 
     async def single_call(self, batch: List[Call]) -> RPCResponse:
         block_identifier = batch[0].block_identifier
@@ -85,7 +88,7 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
                 **self.get_request_kwargs()
             )
             response = self.decode_rpc_response(raw_response)
-            try:
+            if 'result' in response:
                 result = PYTHONIC_RESULT_FORMATTERS[RPC.eth_call](response['result'])
                 response['result'] = decode_return_data(
                     self.web3,
@@ -93,16 +96,21 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
                     aggregate.abi,
                     aggregate._return_data_normalizers
                 )[1]
-            except KeyError:
-                pass
+            elif 'error' in response:
+                if response['error']['message'].find('out of gas') > -1:
+                    batch1, batch2 = batch[:len(batch) // 2], batch[len(batch) // 2:]
+                    resp1, resp2 = await asyncio.gather(self.single_call(batch1), self.single_call(batch2))
+                    response['result'] = resp1['result'] + resp2['result']
+            else:
+                raise ValueError('Singlecall response error')
         return response
 
     async def multicall(self):
         if self.calls:
             working = {}
             batches = {}
-            for call in self.calls:
-                working[call] = self.calls[call]
+            for call, fut in self.calls.items():
+                working[call] = fut
                 if call.block_identifier in batches:
                     batches[call.block_identifier].append(call)
                 else:
@@ -112,6 +120,7 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
             responses: Tuple[RPCResponse] = await asyncio.gather(*queries)
             for response, batch in zip(responses, batches.values()):
                 if 'result' in response:
+                    assert len(response['result']) == len(batch), f"Invalid response: {response['result']}"
                     for result, call in zip(response['result'], batch):
                         res = RPCResponse(
                             id=response['id'],
@@ -127,19 +136,33 @@ class MulticallHTTPProvider(AsyncHTTPProvider):
                             error=response['error']
                         )
                         working[call].set_result(res)
+                else:
+                    raise ValueError('Multicall response error')
 
     async def make_request(self, method: RPCEndpoint, params: Any) -> RPCResponse:
         self.logger.debug("Making request HTTP. URI: %s, Method: %s",
                           self.endpoint_uri, method)
         if method == RPC.eth_call:
-            address = params[0]['to']
-            data = params[0]['data']
-            block_identifier: BlockIdentifier = params[-1]
-            fut = self.loop.create_future()
-            call = Call(address, data, block_identifier)
-            self.calls[call] = fut
-            self.loop.create_task(self.multicall())
-            response = await fut
+            call = Call(target=params[0]['to'], call_data=params[0]['data'], block_identifier=params[-1])
+            if call in self.calls:
+                # Avoid duplicate call
+                fut = self.calls[call]
+            else:
+                if not self.calls:
+                    self.loop.create_task(self.multicall())
+                fut = self.loop.create_future()
+                self.calls[call] = fut
+            try:
+                response = await asyncio.wait_for(fut, 10)
+            except asyncio.TimeoutError:
+                self.logger.warning(f'Multicall timeout {params=}')
+                request_data = self.encode_rpc_request(method, params)
+                raw_response = await async_make_post_request(
+                    self.endpoint_uri,
+                    request_data,
+                    **self.get_request_kwargs()
+                )
+                response = self.decode_rpc_response(raw_response)
         else:
             request_data = self.encode_rpc_request(method, params)
             raw_response = await async_make_post_request(

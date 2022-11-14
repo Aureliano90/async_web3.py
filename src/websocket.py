@@ -5,7 +5,10 @@ import traceback
 from typing import AsyncGenerator
 import websockets
 from eth_typing import HexAddress
-from web3.exceptions import BadResponseFormat
+from web3.exceptions import (
+    BadResponseFormat,
+    ContractLogicError
+)
 from web3.datastructures import AttributeDict
 from web3.main import *
 from web3.method import (

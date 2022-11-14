@@ -398,21 +398,24 @@ class aWeb3(Web3):
             argument_filters=argument_filters
         )
 
-    async def get_log_entries(self, log_filter: Filter) -> List[LogReceipt]:
+    async def get_logs(self, log_filter: Union[LogFilter, FilterParams]) -> List[LogReceipt]:
+        return await self.eth.get_logs(log_filter.filter_params if isinstance(log_filter, LogFilter) else log_filter)
+
+    async def get_filter_logs(self, log_filter: LogFilter) -> List[LogReceipt]:
         """Get all log entries
         """
         logs = await self.eth.get_filter_logs(log_filter.filter_id)
         log_entries = log_filter._filter_valid_entries(logs)
         return log_filter._format_log_entries(log_entries)
 
-    async def get_log_changes(self, log_filter: Filter) -> List[LogReceipt]:
+    async def get_filter_changes(self, log_filter: LogFilter) -> List[LogReceipt]:
         """Get new log entries
         """
         logs = await self.eth.get_filter_changes(log_filter.filter_id)
         log_entries = log_filter._filter_valid_entries(logs)
         return log_filter._format_log_entries(log_entries)
 
-    async def get_logs(
+    async def subscribe_logs(
             self,
             event: Optional[ContractEvent] = None,
             address: Optional[Union[AnyAddress, Sequence[AnyAddress]]] = None,
@@ -464,7 +467,7 @@ class aWeb3(Web3):
             await asyncio.sleep(1)
 
     @staticmethod
-    async def decode_pending(contract: Contract, tx: TxData):
+    def decode_tx_data(contract: Contract, tx: TxData) -> Tuple[ContractFunction, Dict[str, Any]]:
         return contract.decode_function_input(tx.input)
 
     async def multicall(
