@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 import websockets
 from eth_typing import HexAddress
 from web3.exceptions import (
+    BadFunctionCallOutput,
     BadResponseFormat,
     ContractLogicError
 )
@@ -24,9 +25,8 @@ from web3.types import *
 from web3._utils.rpc_abi import RPC, RPCEndpoint
 from web3._utils.method_formatters import (
     get_result_formatters,
-    log_entry_formatter,
-    receipt_formatter,
-    PYTHONIC_RESULT_FORMATTERS
+    get_error_formatters,
+    log_entry_formatter
 )
 
 
@@ -157,6 +157,7 @@ class NewHeads(WebsocketSubscription):
         """Websocket generator of new blocks
         """
         super().__init__(endpoint_uri, 'newHeads', loop=loop)
+        self.formatter = get_result_formatters(RPC.eth_getBlockByNumber, self.ws_eth)
         self.current: Optional[BlockData] = None
 
     async def __aiter__(self) -> AsyncGenerator[BlockData, None]:
@@ -176,12 +177,7 @@ class NewHeads(WebsocketSubscription):
             self.current = block
 
     def process_result(self, res: AttributeDict) -> BlockData:
-        return apply_result_formatters(
-            get_result_formatters(
-                RPC.eth_getBlockByNumber,
-                self.ws_eth),
-            res
-        )
+        return apply_result_formatters(self.formatter, res)
 
 
 class AlchemyPendingFilter(TypedDict):
@@ -203,15 +199,11 @@ class PendingTransactions(WebsocketSubscription):
             super().__init__(endpoint_uri, 'alchemy_pendingTransactions', params=params, loop=loop)
         else:
             super().__init__(endpoint_uri, 'newPendingTransactions', loop=loop)
+        self.formatter = get_result_formatters(RPC.eth_getTransactionByHash, self.ws_eth)
 
     def process_result(self, tx: Union[AttributeDict, HexStr]) -> Union[TxData, HexStr]:
         if isinstance(tx, AttributeDict):
-            return apply_result_formatters(
-                get_result_formatters(
-                    RPC.eth_getTransactionByHash,
-                    self.ws_eth),
-                tx
-            )
+            return apply_result_formatters(self.formatter, tx)
         else:
             return tx
 

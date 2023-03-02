@@ -17,8 +17,9 @@ Define the following in `.env` according to the chain you use
 ```
 WEB3_INFURA_PROJECT_ID=
 WEB3_INFURA_SCHEME=https
-NETWORK=avalanche-mainnet
-BLOCK_EXPLORER=https://api.snowtrace.io
+WEB3_WS_PROVIDER_URI=
+NETWORK=goerli
+BLOCK_EXPLORER=https://api-goerli.etherscan.io/
 EXPLORER_API_KEY=
 ```
 

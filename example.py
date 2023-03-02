@@ -8,11 +8,11 @@ async def main():
     await web3.create_account('0xc77f20b0a53e49d82ec6ccff998e03e58d09334c6ddc142f0bec883149d3b218')
     print(web3.default_account)
     print(encode_hex(web3.eth.account.key))
-    LINK = web3.toChecksumAddress('0x326c977e6efc84e512bb9c30f76e30c160ed06fb')
-    token_contract = web3.contract(LINK, abi=await get_abi(LINK))
+    LINK = web3.toChecksumAddress('0x326C977E6efc84E512bB9C30f76E30c160eD06FB')
+    token_contract = web3.contract(LINK, abi=await etherscan.get_abi(LINK))
     balanceOf = token_contract.functions.balanceOf(web3.default_account)
     res = await web3.call(balanceOf)
-    pprint(res)
+    pprint(f'balanceOf={res}')
     to_address = web3.toChecksumAddress('0xAB78e2D4C131fe44755140F5bdEbD9beA25a3c8C')
     transfer = token_contract.functions.transfer(to_address, web3.toWei(0.1, 'ether'))
     transaction = await web3.build_transaction(transfer)
@@ -29,4 +29,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.get_event_loop_policy().get_event_loop().run_until_complete(main())
+    asyncio.get_event_loop().run_until_complete(main())

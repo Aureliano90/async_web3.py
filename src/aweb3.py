@@ -10,6 +10,7 @@ from web3.contract import (
     ContractEvent,
     prepare_transaction
 )
+from web3.eth import AsyncEth
 from web3._utils.empty import Empty
 from web3._utils.filters import Filter, LogFilter
 from web3._utils.module import attach_modules
@@ -54,8 +55,7 @@ class aWeb3(Web3):
         self.eth.retrieve_caller_fn = retrieve_async_method_call_fn(self, self.eth)
         self._eth = Web3(provider=HTTPProvider(endpoint_uri)).eth
         self._nonce = Nonce(0)
-        with open('./abi/Multicall2.json') as abi:
-            self.MULTICALL = self.contract(MULTICALL_ADDRESS[os.environ['NETWORK']], abi=json.load(abi)['abi'])
+        self.MULTICALL = self.contract(MULTICALL.address, abi=MULTICALL.abi)
 
     @property
     def default_account(self) -> Union[ChecksumAddress, Empty]:
@@ -110,7 +110,7 @@ class aWeb3(Web3):
             self,
             account: Union[AnyAddress, ENS] = '',
             block_identifier: Optional[BlockIdentifier] = None
-    ) -> int:
+    ) -> Union[int, decimal.Decimal]:
         """Ether balance
         """
         if not account:
@@ -280,7 +280,7 @@ class aWeb3(Web3):
         gas_tx = await self.estimate_gas(prepared_tx)
         gas_tx.pop('data')
         gas_tx.pop('to')
-        return fn.buildTransaction(gas_tx)
+        return fn.build_transaction(gas_tx)
 
     async def call(
             self,
@@ -308,7 +308,7 @@ class aWeb3(Web3):
             transaction
         )
         return_data = await self.eth.call(prepared_tx, block_identifier, state_override)
-        return decode_return_data(self, return_data, fn.abi, fn._return_data_normalizers)
+        return decode_return_data(self, return_data, fn)
 
     async def send_raw_transaction(self, transaction: Union[HexStr, bytes]) -> HexBytes:
         return await self.eth.send_raw_transaction(transaction)
@@ -327,6 +327,11 @@ class aWeb3(Web3):
 
     async def get_transaction_receipt(self, tx_hash: Union[HexStr, HexBytes]) -> TxReceipt:
         return await self.eth.get_transaction_receipt(HexBytes(tx_hash))
+
+    async def wait_for_transaction_receipt(
+        self, tx_hash: Union[HexStr, HexBytes], timeout: float = 60, poll_latency: float = 0.1
+    ) -> TxReceipt:
+        return await AsyncEth.wait_for_transaction_receipt(self.eth, tx_hash, timeout, poll_latency)
 
     async def transfer_eth(
             self,
@@ -513,7 +518,6 @@ class aWeb3(Web3):
             decode_return_data(
                 self,
                 return_data[i][1],
-                fn.abi,
-                fn._return_data_normalizers
+                fn
             ) for i, fn in enumerate(fns)
         ]
