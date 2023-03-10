@@ -321,8 +321,8 @@ class aWeb3(Web3):
     async def send_transaction(self, transaction: TxParams) -> HexBytes:
         """Sign and broadcast
         """
-        self.nonce += 1
         signed_tx = self.sign_transaction(transaction)
+        self.nonce += 1
         return await self.send_raw_transaction(signed_tx.rawTransaction)
 
     async def get_transaction_receipt(self, tx_hash: Union[HexStr, HexBytes]) -> TxReceipt:
