@@ -180,9 +180,9 @@ class NewHeads(WebsocketSubscription):
         return apply_result_formatters(self.formatter, res)
 
 
-class AlchemyPendingFilter(TypedDict):
-    fromAddress: Union[HexAddress, List[HexAddress]]
-    toAddress: Union[HexAddress, List[HexAddress]]
+class AlchemyPendingFilter(TypedDict, total=False):
+    fromAddress: Union[AnyAddress, List[AnyAddress]]
+    toAddress: Union[AnyAddress, List[AnyAddress]]
     hashesOnly: bool
 
 

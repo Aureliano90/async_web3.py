@@ -7,47 +7,47 @@ from datetime import datetime, timezone
 import aiohttp
 
 
-class REST_Semaphore(asyncio.Semaphore):
-    """A custom semaphore to be used with REST API with velocity limit under asyncio
-    """
+class RateLimiter(asyncio.Semaphore):
+    """A custom semaphore to be used with REST API with velocity limit under asyncio"""
 
-    def __init__(self, value: int, interval: int):
-        """
-        :param value: API limit
+    def __init__(self, concurrency: int, interval: int):
+        """控制REST API访问速率
+
+        :param concurrency: API limit
         :param interval: Reset interval
         """
-        super().__init__(value)
+        super().__init__(concurrency)
         # Queue of inquiry timestamps
-        self._inquiries = collections.deque(maxlen=value)
+        self._inquiries = collections.deque(maxlen=concurrency)
         self._loop = asyncio.get_event_loop()
+        self._concurrency = concurrency
         self._interval = interval
+        self._count = concurrency
 
     def __repr__(self):
-        return f'API velocity: {self._inquiries.maxlen} inquiries/{self._interval}s'
+        return f"Rate limit: {self._concurrency} inquiries/{self._interval}s"
 
     async def acquire(self):
-        # print('sem before acquire', len(self._waiters))
         await super().acquire()
-        if self._inquiries:
+        if self._count > 0:
+            self._count -= 1
+        else:
             timelapse = time.monotonic() - self._inquiries.popleft()
             # Wait until interval has passed since the first inquiry in queue returned.
             if timelapse < self._interval:
                 await asyncio.sleep(self._interval - timelapse)
-        # print('sem after acquire', len(self._waiters))
         return True
 
     def release(self):
-        # print('sem before release', len(self._waiters))
         self._inquiries.append(time.monotonic())
         super().release()
-        # print('sem after release', len(self._waiters))
 
 
 @attr.s(repr=True, slots=True)
 class Etherscan:
     client: aiohttp.ClientSession = attr.ib(converter=aiohttp.ClientSession)
     apikey: str = attr.ib()
-    semaphore: REST_Semaphore = attr.ib()
+    semaphore: RateLimiter = attr.ib()
 
     async def close(self):
         await self.client.close()
@@ -159,5 +159,5 @@ class Etherscan:
 etherscan = Etherscan(
     os.environ['BLOCK_EXPLORER'],
     os.environ.get('EXPLORER_API_KEY', ''),
-    REST_Semaphore(5, 1)
+    RateLimiter(5, 1)
 )

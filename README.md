@@ -27,4 +27,5 @@ Install dependencies
 
 ```
 pip install -r requirements.txt
+pip install websockets~=11.0.3
 ```
